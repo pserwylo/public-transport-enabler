@@ -48,9 +48,45 @@ public class PtvProvider extends AbstractNetworkProvider {
         return true;
     }
 
+    /**
+     * Queries the /v2/nearme/latitude/%d/longitude/%d end point to get public transport stops which
+     * are near {@param location}.
+     * @see <a href="https://stevage.github.io/PTV-API-doc/#header15">API Docs</a>
+     */
     @Override
+    @Nonnull
     public NearbyLocationsResult queryNearbyLocations(EnumSet<LocationType> types, Location location, int maxDistance, int maxLocations) throws IOException {
-        return null;
+        assertHealthCheck();
+
+        final HttpUrl url = appendSignatureToUrl(
+                API_BASE_URL.newBuilder()
+                        .addPathSegments("v2/nearme/latitude")
+                        .addPathSegment(Double.toString(location.getLatAsDouble()))
+                        .addPathSegments("longitude")
+                        .addPathSegment(Double.toString(location.getLonAsDouble()))
+                        .build()
+        );
+
+        final CharSequence response = new HttpClient().get(url);
+        try {
+            final JSONArray array = new JSONArray(response.toString());
+            final List<Location> locations = new ArrayList<>(array.length());
+            for (int i = 0; i < array.length(); i ++) {
+                final JSONObject foundJsonLocation = array.getJSONObject(i).getJSONObject("result");
+                final Location foundLocation = parseLocation(foundJsonLocation);
+                if (maxDistance == 0 || foundJsonLocation.getDouble("distance") < maxDistance) {
+                    locations.add(foundLocation);
+                }
+
+                if (maxLocations > 0 && locations.size() >= maxLocations) {
+                    break;
+                }
+            }
+
+            return new NearbyLocationsResult(new ResultHeader(id(), ""), locations);
+        } catch (JSONException e) {
+            throw new IOException("Error parsing JSON response", e);
+        }
     }
 
     @Override
@@ -110,7 +146,7 @@ public class PtvProvider extends AbstractNetworkProvider {
         final JSONObject result = object.getJSONObject("result");
         switch (object.getString("type")) {
             case "stop":
-                return parseSuggestedStop(result);
+                return parseLocation(result);
 
             case "line":
                 LOG.debug("Ignoring type \"line\" in search results.");
@@ -133,7 +169,7 @@ public class PtvProvider extends AbstractNetworkProvider {
      *   "distance": 0.0,
      *   "suburb": "Belgrave South",
      *   "transport_type": "bus",
-     *   "route_type": 2,
+     *   "route_type": 2, (not present when querying nearby locations)
      *   "stop_id": 14985,
      *   "location_name": "140 Colby Dr ",
      *   "lat": -37.9302826,
@@ -142,12 +178,12 @@ public class PtvProvider extends AbstractNetworkProvider {
      *
      * @see <a href="https://stevage.github.io/PTV-API-doc/#figure10">API docs</a>
      */
-    private Location parseSuggestedStop(JSONObject object) throws JSONException {
+    private Location parseLocation(JSONObject object) throws JSONException {
         return new Location(
                 LocationType.STATION,
                 Integer.toString(object.getInt("stop_id")),
-                object.getInt("lat"),
-                object.getInt("lon"),
+                (int)(object.getDouble("lat") * 1E6),
+                (int)(object.getDouble("lon") * 1E6),
                 object.getString("suburb"),
                 object.getString("location_name"),
                 parseProductsFromJson(object.getString("transport_type"))
@@ -185,7 +221,12 @@ public class PtvProvider extends AbstractNetworkProvider {
 
     @Override
     public Set<Product> defaultProducts() {
-        return null;
+        return EnumSet.of(
+                Product.REGIONAL_TRAIN,
+                Product.SUBURBAN_TRAIN,
+                Product.TRAM,
+                Product.BUS
+        );
     }
 
     @Override
@@ -195,11 +236,6 @@ public class PtvProvider extends AbstractNetworkProvider {
 
     @Override
     public QueryTripsResult queryMoreTrips(QueryTripsContext context, boolean later) throws IOException {
-        return null;
-    }
-
-    @Override
-    public Style lineStyle(String network, Product product, String label) {
         return null;
     }
 
