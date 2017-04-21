@@ -8,6 +8,7 @@ import okhttp3.HttpUrl;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.Date;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -38,6 +39,13 @@ public class PtvProviderLiveTest extends AbstractProviderLiveTest {
                 "https://test.example.com/?queryParam=BLAH&devid=135&signature=28331dd78df59534b7be41e675d2840cc974250f",
                 mockPtvProvider.appendSignatureToUrl(urlWithQueryParam).toString()
         );
+    }
+
+    @Test
+    public void queryDeparturesFromCamberwell() throws IOException {
+        final String camberwellStationId = "1032";
+        QueryDeparturesResult departures = provider.queryDepartures(camberwellStationId, new Date(61444058400000L), 5, true); // 2017-01-01 13:00:00
+        print(departures);
     }
 
     @Test

@@ -23,6 +23,8 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
@@ -128,6 +130,24 @@ public final class ParserUtils {
 
     private static final Pattern P_ISO_DATE = Pattern.compile("(\\d{4})-?(\\d{2})-?(\\d{2})");
     private static final Pattern P_ISO_DATE_REVERSE = Pattern.compile("(\\d{2})[-\\.](\\d{2})[-\\.](\\d{4})");
+
+
+    /**
+     * Transform ISO 8601 string to Calendar.
+     * @see <a href="http://stackoverflow.com/a/10621553/2391921">StackOverflow post</a>*/
+    public static Calendar parseIso8601DateTime(final String iso8601) {
+        Calendar calendar = GregorianCalendar.getInstance();
+        String s = iso8601.replace("Z", "+0000");
+        Date date;
+        try {
+            date = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").parse(s);
+        } catch (ParseException e) {
+            throw new RuntimeException("Could not parse ISO 8601 date time: \"" + iso8601 + "\"");
+        }
+
+        calendar.setTime(date);
+        return calendar;
+    }
 
     public static final void parseIsoDate(final Calendar calendar, final CharSequence str) {
         final Matcher mIso = P_ISO_DATE.matcher(str);

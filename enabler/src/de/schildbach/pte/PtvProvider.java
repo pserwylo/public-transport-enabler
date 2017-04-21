@@ -2,6 +2,7 @@ package de.schildbach.pte;
 
 import de.schildbach.pte.dto.*;
 import de.schildbach.pte.util.HttpClient;
+import de.schildbach.pte.util.ParserUtils;
 import okhttp3.HttpUrl;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -89,9 +90,122 @@ public class PtvProvider extends AbstractNetworkProvider {
         }
     }
 
+    // TODO: What are equivs?
     @Override
     public QueryDeparturesResult queryDepartures(String stationId, Date time, int maxDepartures, boolean equivs) throws IOException {
-        return null;
+        assertHealthCheck();
+
+        final HttpUrl url = appendSignatureToUrl(
+                API_BASE_URL.newBuilder()
+                        .addPathSegments("v2/mode/0/stop")
+                        .addPathSegment(stationId)
+                        .addPathSegments("departures/by-destination")
+                        .addPathSegment("limit")
+                        .addPathSegment(maxDepartures > 0 ? Integer.toString(maxDepartures) : "0")
+                        .build()
+        );
+
+        try {
+            final CharSequence httpResponse = new HttpClient().get(url);
+            final JSONObject jsonResponse = new JSONObject(httpResponse.toString());
+            final JSONArray jsonValues = jsonResponse.getJSONArray("values");
+            final QueryDeparturesResult result = new QueryDeparturesResult(new ResultHeader(id(), "v2"));
+
+            List<Departure> departures = new ArrayList<>();
+            List<LineDestination> lines = new ArrayList<>();
+            for (int i = 0; i < jsonValues.length(); i ++) {
+                final JSONObject value = jsonValues.getJSONObject(i);
+
+                /*
+                 * "platform": {
+                 *   "platform_number": "3",
+                 *   "at_platform_now": false,
+                 *   "realtime_id": 0,
+                 *   "stop": {
+                 *     ...
+                 *   },
+                 *   "direction": {
+                 *     ...
+                 *   }
+                 * },
+                 */
+                final JSONObject platform = value.getJSONObject("platform");
+
+                /*
+                 * "stop": {
+                 *   "distance": 0.0,
+                 *   "suburb": "Camberwell",
+                 *   "transport_type": "train",
+                 *   "route_type": 0,
+                 *   "stop_id": 1032,
+                 *   "location_name": "Camberwell",
+                 *   "lat": -37.8265648,
+                 *   "lon": 145.058685
+                 * },
+                 */
+                final JSONObject stop = platform.getJSONObject("stop");
+
+                /*
+                 * "direction": {
+                 *   "linedir_id": 34,
+                 *   "direction_id": 0,
+                 *   "direction_name": "Alamein",
+                 *   "line": {
+                 *     ...
+                 *   }
+                 * }
+                 */
+                final JSONObject direction = platform.getJSONObject("direction");
+
+                /*
+                 * "line": {
+                 *   "transport_type": "train",
+                 *   "route_type": 0,
+                 *   "line_id": 1,
+                 *   "line_name": "Alamein",
+                 *   "line_number": "Alamein",
+                 *   "line_name_short": "Alamein",
+                 *   "line_number_long": ""
+                 * }
+                 */
+                final JSONObject line = direction.getJSONObject("line");
+
+                final Line ptvLine = new Line(
+                        line.getString("line_id"),
+                        "",
+                        parseProductFromTransportType(line.getString("transport_type")),
+                        line.getString("line_name")
+                );
+
+                final Location destination = new Location(
+                        LocationType.STATION,
+                        direction.getString("linedir_id")
+                );
+
+                departures.add(new Departure(
+                        ParserUtils.parseIso8601DateTime(value.getString("time_timetable_utc")).getTime(),
+                        value.isNull("time_realtime_utc") ? null : ParserUtils.parseIso8601DateTime(value.getString("time_realtime_utc")).getTime(),
+                        ptvLine,
+                        new Position(""),
+                        destination,
+                        new int[] {},
+                        ""
+                ));
+
+                lines.add(new LineDestination(ptvLine, destination));
+            }
+
+            result.stationDepartures.add(new StationDepartures(
+                    new Location(LocationType.STATION, stationId),
+                    departures,
+                    lines
+            ));
+
+            return result;
+
+        } catch (JSONException e) {
+            throw new IOException(e);
+        }
     }
 
     /**
@@ -191,32 +305,33 @@ public class PtvProvider extends AbstractNetworkProvider {
     }
 
     // "train", "tram", "bus", "vline" or "nightrider"
-    private Set<Product> parseProductsFromJson(String transportType) {
+    private Set<Product> parseProductsFromJson(String transportType) throws JSONException {
         final Set<Product> products = new HashSet<>(1);
+        products.add(parseProductFromTransportType(transportType));
+        return products;
+    }
+
+    @Nonnull
+    private Product parseProductFromTransportType(String transportType) throws JSONException {
         switch(transportType) {
             case "train":
-                products.add(Product.SUBURBAN_TRAIN);
-                break;
+                return Product.SUBURBAN_TRAIN;
 
             case "tram":
-                products.add(Product.TRAM);
-                break;
+                return Product.TRAM;
 
             case "bus":
-                products.add(Product.BUS);
-                break;
+                return Product.BUS;
 
             case "vline":
-                products.add(Product.REGIONAL_TRAIN);
-                break;
+                return Product.REGIONAL_TRAIN;
 
             case "nightrider":
                 // Doesn't look like there is a particular type of "Night Bus" available, so just stick with "Bus".
-                products.add(Product.BUS);
-                break;
+                return Product.BUS;
         }
 
-        return products;
+        throw new JSONException("Invalid transport_type: " + transportType);
     }
 
     @Override
